@@ -215,6 +215,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
-tests/mock_dest
-tests/mock_source

@@ -1,0 +1,37 @@
+properties:
+  created:
+    type: timestamp
+    required: true
+    default: "%Y-%m-%d %H:%M"
+  modified:
+    type: timestamp
+    required: true
+    default: "%Y-%m-%d %H:%M"
+  synced:
+    type: timestamp
+    required: true
+    default: "%Y-%m-%d %H:%M"
+  publish:
+    type: bool
+    required: true
+    default: false
+  status:
+    type: string
+    required: false
+    enum: [not_started, in_progress, on_hold, done, cancelled]
+    default: not_started
+  creators:
+    type: list
+    required: false
+  own:
+    type: bool
+    required: false
+    default: false
+  is_metacatalog:
+    type: bool
+    required: false
+    default: false
+  is_api:
+    type: bool
+    required: false
+    default: false

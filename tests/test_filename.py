@@ -158,19 +158,20 @@ def test_body_separator_preserved(tmp_path: Path) -> None:
 # ── CLI integration ────────────────────────────────────────────────────────────
 
 
-def test_cli_filename_basic(vault: Path) -> None:
-    result = runner.invoke(app, ["filename", str(vault), "--field", "created"])
-    assert result.exit_code == 0
-    dated = [f for f in vault.iterdir() if f.name.startswith("2026-")]
-    # All 12 fixture files have 'created' — all should be renamed
-    assert len(dated) == 12
+def test_cli_filename_basic(mock_source: Path) -> None:
+    result = runner.invoke(app, ["filename", str(mock_source), "--field", "created"])
+    # Bad Timestamp.md has an invalid date → exit code 1
+    assert result.exit_code == 1
+    dated = [f for f in mock_source.iterdir() if f.name.startswith("2026-")]
+    # 27 of 28 files have valid 'created' — all should be renamed
+    assert len(dated) == 27
 
 
-def test_cli_filename_dry_run_makes_no_changes(vault: Path) -> None:
-    before = {f.name for f in vault.glob("*.md")}
-    result = runner.invoke(app, ["filename", str(vault), "--field", "created", "--dry-run"])
-    assert result.exit_code == 0
-    after = {f.name for f in vault.glob("*.md")}
+def test_cli_filename_dry_run_makes_no_changes(mock_source: Path) -> None:
+    before = {f.name for f in mock_source.glob("*.md")}
+    result = runner.invoke(app, ["filename", str(mock_source), "--field", "created", "--dry-run"])
+    assert result.exit_code == 1  # Bad Timestamp still errors in dry-run
+    after = {f.name for f in mock_source.glob("*.md")}
     assert before == after
 
 
@@ -184,10 +185,10 @@ def test_cli_filename_empty_vault(empty_vault: Path) -> None:
     assert result.exit_code == 0
 
 
-def test_cli_filename_skips_already_prefixed(vault: Path) -> None:
-    pre = vault / "2026-01-01 - already.md"
+def test_cli_filename_skips_already_prefixed(mock_source: Path) -> None:
+    pre = mock_source / "2026-01-01 - already.md"
     pre.write_text("---\ncreated: 2026-05-01 10:00\n---\nBody.\n")
-    result = runner.invoke(app, ["filename", str(vault), "--field", "created"])
-    assert result.exit_code == 0
+    result = runner.invoke(app, ["filename", str(mock_source), "--field", "created"])
+    assert result.exit_code == 1  # Bad Timestamp still errors
     # Should still exist unchanged under its original name
     assert pre.exists()

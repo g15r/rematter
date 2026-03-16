@@ -9,9 +9,11 @@ from typing_extensions import Annotated
 
 from rematter._workers import (
     _filename_worker,
+    _load_schema,
     _run,
     _sync_run,
     _transform_worker,
+    _validate_worker,
     err_console,
 )
 
@@ -114,6 +116,43 @@ def sync(
     [bold cyan]--dest[/].
     """
     _sync_run(source.expanduser(), dest.expanduser(), output_dir, dry_run)
+
+
+@app.command()
+def validate(
+    directory: Annotated[Path, typer.Argument(help="Directory containing markdown files")],
+    schema: Annotated[
+        Path | None,
+        typer.Option("--schema", "-s", help="Path to schema YAML (default: <directory>/_schema.yml)"),
+    ] = None,
+    fix: Annotated[
+        bool,
+        typer.Option("--fix", help="Set default values for missing properties"),
+    ] = False,
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Recurse into subdirectories"),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Preview changes without writing"),
+    ] = False,
+) -> None:
+    """Validate markdown frontmatter against a schema.
+
+    Reads [bold cyan]_schema.yml[/] from the target directory (or [bold cyan]--schema[/])
+    and checks each file's frontmatter for missing fields, wrong types, and
+    unrecognized properties. Use [bold cyan]--fix[/] to set default values for
+    missing properties that define a default in the schema.
+    """
+    schema_path = schema or (directory / "_schema.yml")
+    try:
+        schema_data = _load_schema(schema_path)
+    except FileNotFoundError:
+        err_console.print(f"[bold red]No schema found at:[/] {schema_path}")
+        raise typer.Exit(code=1)
+
+    _run(directory, recursive, dry_run, _validate_worker, schema=schema_data, fix=fix)
 
 
 if __name__ == "__main__":

@@ -6,17 +6,17 @@
 src/rematter/
 ├── __init__.py     re-exports everything; keeps test imports stable
 ├── _core.py        _load(), _dump(), regex constants (FRONTMATTER_RE, DATE_PREFIX_RE, WIKILINK_RE, TYPE_TAG_RE)
-├── _workers.py     all workers, sync pipeline helpers, _run()/_sync_run() dispatchers, console singletons
-└── cli.py          Typer app: filename, transform, sync commands
+├── _workers.py     all workers, sync/validate helpers, _run()/_sync_run() dispatchers, console singletons
+└── cli.py          Typer app: filename, transform, sync, validate commands
 tests/
-├── conftest.py     vault, empty_vault, mock_source, mock_dest fixtures
-├── fixtures/       12 real Obsidian notes covering main frontmatter shapes
-├── mock_source/    16 synthetic files for isolated sync testing (see .docs/sync-pipeline.md)
+├── conftest.py     mock_source, mock_dest, empty_vault fixtures
+├── mock_source/    28 .md files + _schema.yml — all fixture data lives here
 ├── mock_dest/      2 synthetic files (already-synced + dest-only for corpus)
 ├── test_helpers.py _load / _dump unit tests
 ├── test_filename.py
 ├── test_transform.py
-└── test_sync.py    wikilinks, type tags, creator resolution, schema validation, sync pipeline
+├── test_sync.py    wikilinks, type tags, creator resolution, schema validation, sync pipeline
+└── test_validate.py schema validation, fix mode, CLI integration
 ```
 
 ## Design Principles

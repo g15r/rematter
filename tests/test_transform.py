@@ -130,28 +130,28 @@ def test_bool_value_preserved(tmp_path: Path) -> None:
 # ── CLI integration ────────────────────────────────────────────────────────────
 
 
-def test_cli_transform_basic(vault: Path) -> None:
-    result = runner.invoke(app, ["transform", str(vault), "--field", "created", "--to", "date_created"])
+def test_cli_transform_basic(mock_source: Path) -> None:
+    result = runner.invoke(app, ["transform", str(mock_source), "--field", "created", "--to", "date_created"])
     assert result.exit_code == 0
     # All files that had 'created' now have 'date_created'
     from rematter import _load
-    for f in vault.glob("*.md"):
+    for f in mock_source.glob("*.md"):
         parsed = _load(f)
         if parsed is not None:
             fm, _ = parsed
             assert "created" not in fm
 
 
-def test_cli_transform_dry_run(vault: Path) -> None:
-    before = {f.name: f.read_text() for f in vault.glob("*.md")}
-    result = runner.invoke(app, ["transform", str(vault), "--field", "created", "--to", "date_created", "--dry-run"])
+def test_cli_transform_dry_run(mock_source: Path) -> None:
+    before = {f.name: f.read_text() for f in mock_source.glob("*.md")}
+    result = runner.invoke(app, ["transform", str(mock_source), "--field", "created", "--to", "date_created", "--dry-run"])
     assert result.exit_code == 0
-    after = {f.name: f.read_text() for f in vault.glob("*.md")}
+    after = {f.name: f.read_text() for f in mock_source.glob("*.md")}
     assert before == after
 
 
-def test_cli_transform_same_field_exits_error(vault: Path) -> None:
-    result = runner.invoke(app, ["transform", str(vault), "--field", "created", "--to", "created"])
+def test_cli_transform_same_field_exits_error(mock_source: Path) -> None:
+    result = runner.invoke(app, ["transform", str(mock_source), "--field", "created", "--to", "created"])
     assert result.exit_code != 0
     assert "identical" in result.output.lower() or "identical" in (result.stderr or "").lower()
 
@@ -166,11 +166,11 @@ def test_cli_transform_empty_vault(empty_vault: Path) -> None:
     assert result.exit_code == 0
 
 
-def test_cli_transform_files_without_field_are_skipped(vault: Path) -> None:
+def test_cli_transform_files_without_field_are_skipped(mock_source: Path) -> None:
     """DuckDB.md has no 'status' field — must be untouched by a status rename."""
-    duckdb = vault / "DuckDB.md"
+    duckdb = mock_source / "DuckDB.md"
     duckdb_before = duckdb.read_text()
 
-    runner.invoke(app, ["transform", str(vault), "--field", "status", "--to", "reading_status"])
+    runner.invoke(app, ["transform", str(mock_source), "--field", "status", "--to", "reading_status"])
 
     assert duckdb.read_text() == duckdb_before

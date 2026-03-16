@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import typer
+import yaml
 from rich.console import Console
 
 from rematter._core import (
@@ -461,6 +462,132 @@ def _sync_run(
 
     if errors:
         raise typer.Exit(code=1)
+
+
+# ── validate helpers ───────────────────────────────────────────────────────────
+
+
+def _load_schema(path: Path) -> dict[str, Any]:
+    """Load and return a validate schema from a YAML file."""
+    if not path.exists():
+        raise FileNotFoundError(f"Schema file not found: {path}")
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+_SCHEMA_TYPE_CHECKERS: dict[str, Callable[[Any], bool]] = {
+    "timestamp": lambda v: _is_timestamp_like(v),
+    "bool": lambda v: isinstance(v, bool),
+    "string": lambda v: isinstance(v, str),
+    "list": lambda v: isinstance(v, list),
+    "int": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "float": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+}
+
+
+def _validate_against_schema(
+    fm: dict[str, Any], schema: dict[str, Any]
+) -> list[str]:
+    """Return list of error messages for schema violations."""
+    errors: list[str] = []
+    props = schema.get("properties", {})
+    allow_extra = schema.get("allow_extra", False)
+
+    # Structural: missing required fields
+    for field, spec in props.items():
+        if spec.get("required", False) and field not in fm:
+            errors.append(f"missing required field: {field}")
+
+    # Structural: unrecognized fields
+    if not allow_extra:
+        known = set(props.keys())
+        unrecognized = set(fm.keys()) - known
+        if unrecognized:
+            errors.append(f"unrecognized fields: {', '.join(sorted(unrecognized))}")
+
+    if errors:
+        return errors
+
+    # Value-level checks
+    for field, spec in props.items():
+        if field not in fm:
+            continue
+        val = fm[field]
+
+        if val is None:
+            continue
+
+        # Type check
+        expected_type = spec.get("type")
+        if expected_type and expected_type in _SCHEMA_TYPE_CHECKERS:
+            if not _SCHEMA_TYPE_CHECKERS[expected_type](val):
+                errors.append(f"'{field}' must be {expected_type}, got '{val}'")
+                continue
+
+        # Enum check
+        allowed = spec.get("enum")
+        if allowed and val not in allowed:
+            errors.append(
+                f"'{field}' value '{val}' not in allowed values: {', '.join(str(v) for v in allowed)}"
+            )
+
+    return errors
+
+
+def _resolve_default(spec: dict[str, Any]) -> Any:
+    """Resolve a schema default value, expanding strftime format strings for timestamps."""
+    default = spec.get("default")
+    if default is None:
+        return None
+    if spec.get("type") == "timestamp" and isinstance(default, str) and "%" in default:
+        return datetime.now().strftime(default)
+    return default
+
+
+def _validate_worker(
+    path: Path, *, schema: dict[str, Any], fix: bool, dry_run: bool
+) -> Result:
+    """Validate a single file against a schema, optionally fixing missing defaults."""
+    parsed = _load(path)
+    if parsed is None:
+        return "skip", path.name
+
+    fm, body = parsed
+    errors = _validate_against_schema(fm, schema)
+
+    if not errors and not fix:
+        return "skip", path.name
+
+    if fix:
+        props = schema.get("properties", {})
+        fixed_fields: list[str] = []
+        unfixable: list[str] = []
+
+        for field, spec in props.items():
+            if field not in fm:
+                default = _resolve_default(spec)
+                if default is not None:
+                    fm[field] = default
+                    fixed_fields.append(field)
+                elif spec.get("required", False):
+                    unfixable.append(field)
+
+        if unfixable:
+            return "error", f"{path.name}: cannot fix missing required fields without defaults: {', '.join(sorted(unfixable))}"
+
+        if not fixed_fields:
+            # Re-validate after considering everything — nothing to fix
+            if not errors:
+                return "skip", path.name
+            return "error", f"{path.name}: {'; '.join(errors)}"
+
+        if dry_run:
+            return "dry-run", f"{path.name}: would set {', '.join(sorted(fixed_fields))}"
+
+        path.write_text(_dump(fm, body), encoding="utf-8")
+        return "done", f"{path.name}: set {', '.join(sorted(fixed_fields))}"
+
+    # Report-only mode
+    return "error", f"{path.name}: {'; '.join(errors)}"
 
 
 # ── transform worker ───────────────────────────────────────────────────────────
