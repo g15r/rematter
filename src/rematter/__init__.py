@@ -8,13 +8,16 @@ from rematter._workers import (
     _extract_type_tags,
     _filename_worker,
     _is_timestamp_like,
+    _load_schema,
     _resolve_creators,
     _resolve_wikilinks,
     _run,
     _sync_run,
     _sync_worker,
     _transform_worker,
+    _validate_against_schema,
     _validate_sync_schema,
+    _validate_worker,
 )
 from rematter.cli import app
 
@@ -38,6 +41,9 @@ __all__ = [
     "_sync_run",
     "_sync_worker",
     "_transform_worker",
+    "_validate_against_schema",
     "_validate_sync_schema",
+    "_validate_worker",
+    "_load_schema",
     "app",
 ]

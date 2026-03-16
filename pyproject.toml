@@ -21,6 +21,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+tmp_path_retention_policy = "none"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rematter"]
