@@ -564,11 +564,13 @@ def _validate_worker(
 
         for field, spec in props.items():
             if field not in fm:
+                if not spec.get("required", False):
+                    continue
                 default = _resolve_default(spec)
                 if default is not None:
                     fm[field] = default
                     fixed_fields.append(field)
-                elif spec.get("required", False):
+                else:
                     unfixable.append(field)
 
         if unfixable:
