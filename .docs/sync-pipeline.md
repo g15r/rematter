@@ -129,7 +129,7 @@ Sync tests use dedicated `mock_source/` (29 .md files + `.rematter.yaml` + `_med
 | Multi-type skip | Multi Type (`#Book #Film`) |
 | Schema: bad values | Bad Timestamp (non-ISO `created`) |
 | Type-specific validation | Book Missing Fields (missing creators/status/own) |
-| Valid syncs | Publishable Book, Publishable Film, Known Author, Body Links, Heading Not Tag, Valid Dataset, Mermaid Diagram and Table |
+| Valid syncs | Publishable Book, Publishable Film, Known Author, Body Links, Heading Not Tag, Valid Dataset |
 
 `mock_dest` has 2 files (slugified names with `title` in frontmatter): an already-synced file (same `modified`) and a dest-only file for corpus inclusion.
 
