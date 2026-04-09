@@ -14,10 +14,6 @@ jobs:
     name: Test (Python 3.13)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - name: Begin Testbox
-        uses: useblacksmith/begin-testbox@v2
-        with:
-          testbox_id: ${{ inputs.testbox_id }}
       - uses: actions/checkout@v6
       - name: Install uv
         uses: astral-sh/setup-uv@v8.0.0
@@ -25,6 +21,10 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         run: uv sync --dev
+      - name: Begin Testbox
+        uses: useblacksmith/begin-testbox@v2
+        with:
+          testbox_id: ${{ inputs.testbox_id }}
       - name: Run Testbox
         uses: useblacksmith/run-testbox@v2
         if: always()
