@@ -37,14 +37,15 @@ commit_parsers = [
   { message = "^perf", group = "<!-- 2 -->🏎️ Performance" },
   { message = "^refactor", group = "<!-- 3 -->♻️ Refactor" },
   { message = "^test", group = "<!-- 5 -->🧪 Testing" },
-  { message = "^agent", group = "<!-- 6 -->🤖 Coding Agents", default_scope = "Config" },
-  { message = "^doc", group = "<!-- 7 -->📚 Documentation", default_scope = "Unscoped" },
-  { message = "^build", group = "<!-- 8 -->🛠️ Build System" },
-  { message = "^ci", group = "<!-- 9 -->🚧 CI/CD", default_scope = "GitHub Actions" },
-  { message = "^style", group = "<!-- 10 -->🎨 Style & Formatting" },
+  { message = "^agent", group = "<!-- 51 -->🤖 Coding Agents", default_scope = "Config" },
+  { message = "^doc", group = "<!-- 52 -->📚 Documentation", default_scope = "Unscoped" },
+  { message = "^style", group = "<!-- 53 -->🎨 Style & Formatting" },
+  { message = "^ci", group = "<!-- 6 -->🚧 CI/CD", default_scope = "GitHub Actions" },
   { message = "^chore\\(release\\): update changelog", skip = true },
-  { message = "^chore", group = "<!-- 11 -->🧰 Tooling & Tasks" },
-  { body = ".*security", group = "<!-- 4 -->🛡️ Security" },
+  { message = "^chore", group = "<!-- 7 -->🧰 Tooling & Tasks" },
+  { message = "^revert", group = "<!-- 01 -->📼 Reverts" },
+  { message = "^build", group = "<!-- 61 -->🛠️ Build System" },
+  { body = ".*security", group = "<!-- 02 -->🛡️ Security" },
 ]
 filter_commits = true
 fail_on_unmatched_commit = true
