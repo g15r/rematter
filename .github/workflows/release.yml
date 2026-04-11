@@ -5,27 +5,12 @@ on:
     types: [published]
 
 jobs:
-  build:
-    name: Build ${{ matrix.os }}-${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - os: darwin
-            arch: arm64
-            runner: macos-latest
-          - os: darwin
-            arch: amd64
-            runner: macos-15-intel
-          - os: linux
-            arch: amd64
-            runner: ubuntu-latest
-          - os: linux
-            arch: arm64
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
-
+  publish:
+    name: Publish to PyPI
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: pypi
     permissions:
-      contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
@@ -35,50 +20,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
-        run: uv sync --dev && uv pip install pyinstaller
+      - name: Build package
+        run: uv build
 
-      - name: Build binary
-        run: |
-          uv run pyinstaller \
-            --onefile \
-            --name rematter \
-            --collect-all rematter \
-            src/rematter/cli.py
-
-      - name: Package tarball
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION_CLEAN="${VERSION#v}"
-          ARCHIVE="rematter-${VERSION_CLEAN}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
-          tar -czf "${ARCHIVE}" -C dist rematter
-          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
-
-      - name: Upload release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" "${ARCHIVE}"
-
-  homebrew:
-    name: Update Homebrew tap
-    needs: build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - name: Release to Homebrew tap
-        uses: Justintime50/homebrew-releaser@v3
-        with:
-          homebrew_owner: g15r
-          homebrew_tap: homebrew-tap
-          formula_folder: Formula
-          github_token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          commit_owner: github-actions[bot]
-          commit_email: github-actions[bot]@users.noreply.github.com
-          install: 'bin.install "rematter"'
-          test: 'assert_match("Usage", shell_output("#{bin}/rematter --help"))'
-          target_darwin_amd64: true
-          target_darwin_arm64: true
-          target_linux_amd64: true
-          target_linux_arm64: true
-          update_readme_table: true
-          skip_commit: false
+      - name: Publish to PyPI
+        run: uv publish
