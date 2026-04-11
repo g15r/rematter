@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.1 - 2026-04-11
+
+### ✨ Features
+
+#### Date-extract
+
+* rename filename cmd to date-extract (#7) by @gwenwindflower in #7
+
+
+#### Sync
+
+* make type tag extraction optional in config (#5) by @gwenwindflower in #5
+
+
+### 📼 Reverts
+
+#### Testbox
+
+* move Begin back to first step by @gwenwindflower
+
+
+### 🚧 CI/CD
+
+#### Testbox
+
+* add blacksmith testbox (#4) by @gwenwindflower in #4
+
+* move testbox Begin step after uv by @gwenwindflower in #6
+
+* add bash step passing PATH to BASH_ENV (#8) by @gwenwindflower in #8
+
+
+### 🛠️ Build System
+
+#### Pypi
+
+* move from brew to pypi release by @gwenwindflower
+
+
+### 🧰 Tooling & Tasks
+
+#### Release
+
+* fix category ordering in git-cliff by @gwenwindflower
+
+
 ## 0.1.0 - 2026-04-09
 
 ### ✨ Features
