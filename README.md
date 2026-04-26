@@ -13,7 +13,7 @@ The easiest way to install if you're a Python user is via `uv`, but there's also
 uv tool install rematter
 
 # Homebrew
-brew install g15r/tap/rematter
+brew install supermodellabs/tap/rematter
 ```
 
 ## Quick start

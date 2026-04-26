@@ -30,9 +30,9 @@ dependencies = [
 rematter = "rematter.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/g15r/rematter"
-Repository = "https://github.com/g15r/rematter"
-Issues = "https://github.com/g15r/rematter/issues"
+Homepage = "https://github.com/supermodellabs/rematter"
+Repository = "https://github.com/supermodellabs/rematter"
+Issues = "https://github.com/supermodellabs/rematter/issues"
 
 [dependency-groups]
 dev = [
