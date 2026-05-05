@@ -166,7 +166,7 @@ def test_body_separator_preserved(tmp_path: Path) -> None:
 
 def test_cli_date_extract_basic(mock_source: Path) -> None:
     result = runner.invoke(
-        app, ["date-extract", str(mock_source), "--field", "created"]
+        app, ["utils", "date-extract", str(mock_source), "--field", "created"]
     )
     # Bad Timestamp.md has an invalid date → exit code 1
     assert result.exit_code == 1
@@ -178,7 +178,7 @@ def test_cli_date_extract_basic(mock_source: Path) -> None:
 def test_cli_date_extract_dry_run_makes_no_changes(mock_source: Path) -> None:
     before = {f.name for f in mock_source.glob("*.md")}
     result = runner.invoke(
-        app, ["date-extract", str(mock_source), "--field", "created", "--dry-run"]
+        app, ["utils", "date-extract", str(mock_source), "--field", "created", "--dry-run"]
     )
     assert result.exit_code == 1  # Bad Timestamp still errors in dry-run
     after = {f.name for f in mock_source.glob("*.md")}
@@ -186,12 +186,12 @@ def test_cli_date_extract_dry_run_makes_no_changes(mock_source: Path) -> None:
 
 
 def test_cli_date_extract_nonexistent_directory(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["date-extract", str(tmp_path / "nope")])
+    result = runner.invoke(app, ["utils", "date-extract", str(tmp_path / "nope")])
     assert result.exit_code != 0
 
 
 def test_cli_date_extract_empty_vault(empty_vault: Path) -> None:
-    result = runner.invoke(app, ["date-extract", str(empty_vault)])
+    result = runner.invoke(app, ["utils", "date-extract", str(empty_vault)])
     assert result.exit_code == 0
 
 
@@ -199,7 +199,7 @@ def test_cli_date_extract_skips_already_prefixed(mock_source: Path) -> None:
     pre = mock_source / "2026-01-01 - already.md"
     pre.write_text("---\ncreated: 2026-05-01 10:00\n---\nBody.\n")
     result = runner.invoke(
-        app, ["date-extract", str(mock_source), "--field", "created"]
+        app, ["utils", "date-extract", str(mock_source), "--field", "created"]
     )
     assert result.exit_code == 1  # Bad Timestamp still errors
     # Should still exist unchanged under its original name

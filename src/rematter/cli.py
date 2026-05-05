@@ -9,10 +9,14 @@ from typing_extensions import Annotated
 
 from rematter._workers import (
     _date_extract_worker,
+    _fix_tables_worker,
     _load_config,
     _load_schema,
+    _move_linked_dir,
+    _reflow_worker,
     _run,
     _sync_run,
+    _step_headings_worker,
     _transform_worker,
     _validate_worker,
     err_console,
@@ -25,8 +29,16 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
+utils_app = typer.Typer(
+    name="utils",
+    help="🛠️  Small markdown processing utilities.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(utils_app, name="utils")
 
-@app.command()
+
+@utils_app.command("date-extract")
 def date_extract(
     directory: Annotated[
         Path, typer.Argument(help="Directory containing markdown files")
@@ -235,6 +247,151 @@ def validate(
         ignore=ignore,
         schema=schema_data,
         fix=fix,
+    )
+
+
+@utils_app.command("reflow")
+def reflow(
+    directory: Annotated[
+        Path, typer.Argument(help="Directory containing markdown files")
+    ],
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Recurse into subdirectories"),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Preview changes without writing"),
+    ] = False,
+) -> None:
+    """🪡  Reflow hard-wrapped markdown into single-line paragraphs.
+
+    Joins consecutive prose lines into one. Preserves frontmatter, fenced code
+    blocks, headings, lists, blockquotes, tables, HTML blocks, and horizontal
+    rules. Useful for cleaning up LLM-generated text that uses obsolete hard line
+    wrapping.
+    """
+    _run(directory, recursive, dry_run, _reflow_worker)
+
+
+_TABLE_STYLES = ("compact", "aligned")
+
+
+@utils_app.command("fix-tables")
+def fix_tables(
+    directory: Annotated[
+        Path, typer.Argument(help="Directory containing markdown files")
+    ],
+    style: Annotated[
+        str,
+        typer.Option(
+            "--style",
+            "-s",
+            help="Table style: 'compact' (| a | b |) or 'aligned' (column-padded)",
+        ),
+    ] = "compact",
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Recurse into subdirectories"),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Preview changes without writing"),
+    ] = False,
+) -> None:
+    """📐  Reformat markdown tables to a consistent style.
+
+    Fixes the most common LLM-generated table problem: missing inner padding
+    around pipes ([italic]|foo|bar|[/] instead of [italic]| foo | bar |[/]). Tables
+    inside fenced code blocks are left untouched.
+    """
+    if style not in _TABLE_STYLES:
+        err_console.print(
+            f"[bold red]❌  Unknown style:[/] {style!r}. "
+            f"Expected one of: {', '.join(_TABLE_STYLES)}."
+        )
+        raise typer.Exit(code=2)
+    _run(directory, recursive, dry_run, _fix_tables_worker, style=style)
+
+
+@utils_app.command("step-headings")
+def step_headings(
+    directory: Annotated[
+        Path, typer.Argument(help="Directory containing markdown files")
+    ],
+    recursive: Annotated[
+        bool,
+        typer.Option("--recursive", "-r", help="Recurse into subdirectories"),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Preview changes without writing"),
+    ] = False,
+) -> None:
+    """🪜  Pull skipped heading levels back to a stepwise sequence.
+
+    Walks ATX (#) headings; if a heading skips ahead of its parent (e.g. h2 → h4),
+    it's pulled up to parent_level + 1, and descendants shift up by the same delta.
+    The top-level depth is preserved — if your highest heading is h2, it stays h2.
+    Headings inside fenced code blocks and Setext (underline) headings are not
+    touched.
+    """
+    _run(directory, recursive, dry_run, _step_headings_worker)
+
+
+@utils_app.command("move-linked-dir")
+def move_linked_dir(
+    target: Annotated[
+        Path,
+        typer.Argument(
+            help="Directory to move (relative to source, or absolute inside source)"
+        ),
+    ],
+    source: Annotated[
+        Path | None,
+        typer.Option(
+            "--from",
+            "-f",
+            help="Source anchor — the world the operation is aware of "
+            "(defaults to current directory)",
+        ),
+    ] = None,
+    to: Annotated[
+        Path | None,
+        typer.Option(
+            "--to",
+            "-t",
+            help="New location for target, relative to source; "
+            "omit to flatten target's contents into source",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Preview changes without writing"),
+    ] = False,
+) -> None:
+    """🚚  Move/rename a subdirectory and rewrite markdown links to its contents.
+
+    The [bold cyan]--from[/] flag (default: pwd) sets the world the operation
+    knows about — workers fan out across every [italic].md[/] file in it. Omit
+    [bold cyan]--to[/] to flatten [italic]TARGET[/]'s contents into source.
+
+    Bare wikilinks ([italic]\\[\\[note\\]\\][/]) resolve by filename in Obsidian
+    and are left untouched. Only [italic]\\[label](path)[/] and
+    [italic]!\\[alt](path)[/] links are rewritten.
+    """
+    result = _move_linked_dir(target, source=source, to=to, dry_run=dry_run)
+
+    for err in result.errors:
+        err_console.print(f"[bold red]❌  {err}[/]")
+    if result.errors:
+        raise typer.Exit(code=1)
+
+    label = "Would move" if dry_run else "Moved"
+    rewrite_label = "would rewrite" if dry_run else "rewrote"
+    typer.echo(
+        f"{label} {len(result.planned_moves)} file(s); "
+        f"{rewrite_label} links in {len(result.rewritten_files)} file(s)."
     )
 
 

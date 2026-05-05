@@ -20,14 +20,19 @@ import yaml
 from rich.console import Console
 
 from rematter._core import (
+    ATX_HEADING_RE,
     DATE_PREFIX_RE,
+    FENCE_RE,
     MD_IMAGE_RE,
+    SPECIAL_LINE_RE,
+    TABLE_LINE_RE,
     TYPE_TAG_RE,
     WIKILINK_IMAGE_RE,
     WIKILINK_RE,
     _dump,
     _load,
     _slugify,
+    _split_frontmatter,
 )
 
 console = Console()
@@ -834,3 +839,496 @@ def _transform_worker(
 
     path.write_text(_dump(new_fm, body), encoding="utf-8")
     return "done", f"{path.name}: '{from_field}'  →  '{to_field}'"
+
+
+# ── reflow worker ──────────────────────────────────────────────────────────────
+
+
+def _reflow_text(text: str) -> str:
+    """Reflow hard-wrapped markdown into single-line paragraphs.
+
+    Joins consecutive lines of plain prose into one line. Preserves fenced code
+    blocks, headings, lists, blockquotes, tables, HTML blocks, and horizontal rules.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if buf:
+            out.append(" ".join(s.strip() for s in buf))
+            buf.clear()
+
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = FENCE_RE.match(line)
+        if m:
+            flush()
+            out.append(line)
+            fence = m.group(2)[0] * 3
+            i += 1
+            while i < len(lines):
+                out.append(lines[i])
+                if re.match(rf"^\s*{re.escape(fence)}+\s*$", lines[i]):
+                    i += 1
+                    break
+                i += 1
+            continue
+
+        if line.strip() == "":
+            flush()
+            out.append("")
+        elif SPECIAL_LINE_RE.match(line):
+            flush()
+            out.append(line)
+        else:
+            buf.append(line)
+        i += 1
+
+    flush()
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def _reflow_worker(path: Path, *, dry_run: bool) -> Result:
+    text = path.read_text(encoding="utf-8")
+    fm_block, body = _split_frontmatter(text)
+    new_body = _reflow_text(body)
+    if new_body == body:
+        return "skip", path.name
+    if dry_run:
+        return "dry-run", path.name
+    path.write_text(fm_block + new_body, encoding="utf-8")
+    return "done", path.name
+
+
+# ── fix-tables worker ──────────────────────────────────────────────────────────
+
+
+_TABLE_STYLES = {"compact", "aligned"}
+_SEP_CELL_RE = re.compile(r"^\s*:?-{1,}:?\s*$")
+
+
+def _split_table_row(line: str) -> list[str]:
+    """Split a table row line into cell contents (trimmed), dropping outer pipes."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _is_separator_row(cells: list[str]) -> bool:
+    return bool(cells) and all(_SEP_CELL_RE.match(c) for c in cells)
+
+
+def _format_compact(rows: list[list[str]]) -> list[str]:
+    return ["| " + " | ".join(cells) + " |" for cells in rows]
+
+
+def _expand_separator(cell: str, width: int) -> str:
+    """Expand a separator cell to `width` characters, preserving alignment colons."""
+    left = cell.startswith(":")
+    right = cell.endswith(":")
+    inner = max(width - int(left) - int(right), 1)
+    body = "-" * inner
+    return f"{':' if left else ''}{body}{':' if right else ''}"
+
+
+def _format_aligned(rows: list[list[str]], sep_idx: int | None) -> list[str]:
+    if not rows:
+        return []
+    n_cols = max(len(r) for r in rows)
+    # Normalize all rows to same column count
+    norm = [r + [""] * (n_cols - len(r)) for r in rows]
+    widths = [0] * n_cols
+    for r_i, row in enumerate(norm):
+        for c_i, cell in enumerate(row):
+            length = len(cell)
+            if r_i == sep_idx:
+                # Separator's minimum length is its current length (keeps colons)
+                length = max(length, 3)
+            widths[c_i] = max(widths[c_i], length)
+
+    out: list[str] = []
+    for r_i, row in enumerate(norm):
+        if r_i == sep_idx:
+            cells = [_expand_separator(row[c], widths[c]) for c in range(n_cols)]
+        else:
+            cells = [row[c].ljust(widths[c]) for c in range(n_cols)]
+        out.append("| " + " | ".join(cells) + " |")
+    return out
+
+
+def _format_table_block(lines: list[str], style: str) -> list[str]:
+    """Reformat a contiguous block of table lines in the requested style."""
+    rows = [_split_table_row(line) for line in lines]
+    sep_idx = None
+    for i, cells in enumerate(rows):
+        if _is_separator_row(cells):
+            sep_idx = i
+            break
+
+    if style == "aligned":
+        return _format_aligned(rows, sep_idx)
+    return _format_compact(rows)
+
+
+def _fix_tables_text(text: str, *, style: str) -> str:
+    """Rewrite all markdown tables in `text` to the requested style."""
+    if style not in _TABLE_STYLES:
+        raise ValueError(
+            f"unknown table style: {style!r} (expected one of {sorted(_TABLE_STYLES)})"
+        )
+
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    in_code = False
+    while i < len(lines):
+        raw = lines[i]
+        line = raw.rstrip("\n")
+        if FENCE_RE.match(line):
+            in_code = not in_code
+            out.append(raw)
+            i += 1
+            continue
+        if in_code or not TABLE_LINE_RE.match(line):
+            out.append(raw)
+            i += 1
+            continue
+
+        # Collect the full contiguous table block
+        block: list[str] = []
+        block_terminators: list[str] = []
+        j = i
+        while j < len(lines):
+            cur = lines[j].rstrip("\n")
+            if not TABLE_LINE_RE.match(cur):
+                break
+            block.append(cur)
+            # Preserve trailing newlines per source line
+            block_terminators.append("\n" if lines[j].endswith("\n") else "")
+            j += 1
+
+        formatted = _format_table_block(block, style)
+        for formatted_line, terminator in zip(formatted, block_terminators):
+            out.append(formatted_line + terminator)
+        i = j
+
+    return "".join(out)
+
+
+def _fix_tables_worker(path: Path, *, style: str, dry_run: bool) -> Result:
+    text = path.read_text(encoding="utf-8")
+    fm_block, body = _split_frontmatter(text)
+    new_body = _fix_tables_text(body, style=style)
+    if new_body == body:
+        return "skip", path.name
+    if dry_run:
+        return "dry-run", path.name
+    path.write_text(fm_block + new_body, encoding="utf-8")
+    return "done", path.name
+
+
+# ── step-headings worker ───────────────────────────────────────────────────────
+
+
+def _step_headings_text(text: str) -> str:
+    """Rewrite ATX heading levels so no level is skipped relative to its parent.
+
+    The top-level heading depth is preserved (we never promote, e.g., h2 → h1).
+    Walking through the document, each heading whose level skips ahead of its
+    parent is pulled up to parent_level + 1; descendants shift up by the same
+    delta so the structure stays consistent. Headings inside fenced code blocks
+    are not touched. Setext (underline) headings are left alone.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    in_code = False
+    # Stack of (input_level, output_level) for ancestor headings.
+    stack: list[tuple[int, int]] = []
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if FENCE_RE.match(line):
+            in_code = not in_code
+            out.append(raw)
+            continue
+        if in_code:
+            out.append(raw)
+            continue
+        m = ATX_HEADING_RE.match(line)
+        if not m:
+            out.append(raw)
+            continue
+        in_lvl = len(m.group(1))
+        rest = m.group(2)
+        while stack and stack[-1][0] >= in_lvl:
+            stack.pop()
+        if not stack:
+            out_lvl = in_lvl  # top-level: preserve depth
+        else:
+            parent_in, parent_out = stack[-1]
+            out_lvl = min(parent_out + 1, in_lvl)
+        stack.append((in_lvl, out_lvl))
+        suffix = "\n" if raw.endswith("\n") else ""
+        out.append("#" * out_lvl + rest + suffix)
+    return "".join(out)
+
+
+# ── move-linked-dir ────────────────────────────────────────────────────────────
+
+
+_MD_LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)(\s+\"[^\"]*\")?\)")
+
+
+@dataclass
+class MoveLinkedDirResult:
+    """Outcome of a `move-linked-dir` invocation.
+
+    Carries planned moves and rewritten files for dry-run reporting plus any
+    errors that prevented the operation from completing.
+    """
+
+    planned_moves: list[str] = field(default_factory=list)
+    rewritten_files: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def _is_external_or_anchor(target: str) -> bool:
+    """True if a markdown link target is a URL, mailto, or in-page anchor."""
+    if target.startswith("#"):
+        return True
+    if "://" in target.split("#", 1)[0].split("?", 1)[0]:
+        return True
+    if target.startswith("mailto:"):
+        return True
+    return False
+
+
+def _split_target(target: str) -> tuple[str, str]:
+    """Split a link target into (path_part, suffix) where suffix is #frag/?q/empty."""
+    for sep in ("#", "?"):
+        i = target.find(sep)
+        if i >= 0:
+            return target[:i], target[i:]
+    return target, ""
+
+
+def _rewrite_md_links(
+    text: str,
+    md_old_dir: Path,
+    md_new_dir: Path,
+    move_map: dict[Path, Path],
+) -> str:
+    """Rewrite markdown-style links/images whose targets fall inside `move_map`.
+
+    Targets are resolved relative to `md_old_dir` (the file's pre-move location).
+    Matched targets are rewritten relative to `md_new_dir` (the file's post-move
+    location). External URLs, mailto, and pure anchors are left alone.
+    """
+
+    md_is_moving = md_old_dir != md_new_dir
+
+    def _sub(m: re.Match[str]) -> str:
+        bang, label, target, title = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+        if _is_external_or_anchor(target):
+            return m.group(0)
+        path_part, suffix = _split_target(target)
+        if not path_part:
+            return m.group(0)
+        try:
+            abs_old = (md_old_dir / path_part).resolve(strict=False)
+        except (OSError, RuntimeError):
+            return m.group(0)
+        target_moved = abs_old in move_map
+        if not target_moved and not md_is_moving:
+            return m.group(0)
+        new_abs = move_map[abs_old] if target_moved else abs_old
+        try:
+            new_rel = os.path.relpath(new_abs, md_new_dir)
+        except ValueError:
+            return m.group(0)
+        # Use forward slashes for portability in markdown links
+        new_rel = new_rel.replace(os.sep, "/")
+        if new_rel == path_part:
+            return m.group(0)
+        return f"{bang}[{label}]({new_rel}{suffix}{title})"
+
+    return _MD_LINK_RE.sub(_sub, text)
+
+
+def _move_linked_dir_worker(
+    path: Path, *, move_map: dict[Path, Path], dry_run: bool
+) -> Result:
+    """Rewrite markdown links in one file based on a precomputed move plan.
+
+    The worker knows: (a) where the file lives now, (b) where it'll live after
+    the moves are applied (looked up in `move_map`, defaulting to "in place"),
+    and (c) the full set of paths being relocated. It rewrites each link
+    accordingly without performing any actual moves — those happen after the
+    fan-out, in `_move_linked_dir`.
+    """
+    md_abs = path.resolve()
+    new_md_abs = move_map.get(md_abs, md_abs)
+    text = path.read_text(encoding="utf-8")
+    new_text = _rewrite_md_links(
+        text,
+        md_old_dir=md_abs.parent,
+        md_new_dir=new_md_abs.parent,
+        move_map=move_map,
+    )
+    if new_text == text:
+        return "skip", path.name
+    if dry_run:
+        return "dry-run", path.name
+    path.write_text(new_text, encoding="utf-8")
+    return "done", path.name
+
+
+def _move_linked_dir(
+    target: Path,
+    *,
+    source: Path | None = None,
+    to: Path | None = None,
+    dry_run: bool = False,
+) -> MoveLinkedDirResult:
+    """Move/rename `target` (a subdir of `source`) and rewrite markdown links.
+
+    - `source`: the anchor world. Defaults to `Path.cwd()`. The fan-out covers
+      every `.md` file under `source` recursively; we never look outside it.
+    - `target`: directory being moved. Relative paths resolve against `source`;
+      absolute paths must live inside `source`.
+    - `to`: optional destination. Same resolution rules as `target`. When
+      omitted, `target`'s contents are flattened into `source` and `target`
+      itself is removed.
+    - `dry_run`: don't touch the filesystem; report the plan instead.
+
+    Bare wikilinks (`[[note]]`) resolve by filename in Obsidian and are not
+    rewritten. Path-prefixed wikilinks are out of scope for now.
+    """
+    result = MoveLinkedDirResult()
+
+    src_path = (source if source is not None else Path.cwd()).resolve()
+    if not src_path.is_dir():
+        result.errors.append(f"source is not a directory: {src_path}")
+        return result
+
+    if target.is_absolute():
+        tgt_path = target.resolve()
+    else:
+        tgt_path = (src_path / target).resolve()
+
+    if tgt_path == src_path:
+        result.errors.append("target cannot equal source")
+        return result
+    try:
+        tgt_path.relative_to(src_path)
+    except ValueError:
+        result.errors.append(
+            f"target is outside source ({src_path}): {tgt_path}"
+        )
+        return result
+    if not tgt_path.exists():
+        result.errors.append(f"target does not exist: {tgt_path}")
+        return result
+    if not tgt_path.is_dir():
+        result.errors.append(f"target is not a directory: {tgt_path}")
+        return result
+
+    if to is None:
+        dest_path = src_path  # flatten target into source
+    elif to.is_absolute():
+        dest_path = to.resolve()
+    else:
+        dest_path = (src_path / to).resolve()
+    try:
+        dest_path.relative_to(src_path)
+    except ValueError:
+        result.errors.append(
+            f"destination is outside source ({src_path}): {dest_path}"
+        )
+        return result
+
+    # When --to is given, dest must not already exist (avoids ambiguous merges).
+    # Flattening (dest == source) is fine — that's a merge into the anchor by design.
+    if dest_path != src_path and dest_path.exists():
+        result.errors.append(f"destination already exists: {dest_path}")
+        return result
+
+    # Build move_map: every descendant of target → its new absolute path.
+    move_map: dict[Path, Path] = {}
+    for old in tgt_path.rglob("*"):
+        rel = old.relative_to(tgt_path)
+        move_map[old] = dest_path / rel
+
+    # Detect file-level collisions (relevant when flattening into source)
+    for old, new in move_map.items():
+        if old.is_file() and new.exists() and new.resolve() != old:
+            result.errors.append(f"destination already exists: {new}")
+    if result.errors:
+        return result
+
+    # Phase 1: fan workers out over every .md file in source.
+    md_files = sorted(p for p in src_path.rglob("*.md") if p.is_file())
+    worker_results: list[Result] = []
+    if md_files:
+        fn = partial(_move_linked_dir_worker, move_map=move_map, dry_run=dry_run)
+        num_workers = min(len(md_files), os.cpu_count() or 4)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as pool:
+            worker_results = list(pool.map(fn, md_files))
+
+    for (status, msg), md in zip(worker_results, md_files):
+        if status in ("done", "dry-run"):
+            result.rewritten_files.append(str(md))
+        elif status == "error":
+            result.errors.append(msg)
+
+    if result.errors:
+        return result
+
+    for old, new in move_map.items():
+        if old.is_file():
+            result.planned_moves.append(f"{old} → {new}")
+
+    if dry_run:
+        return result
+
+    # Phase 2: apply moves.
+    for old, new in sorted(move_map.items(), key=lambda kv: len(kv[0].parts)):
+        if old.is_dir():
+            new.mkdir(parents=True, exist_ok=True)
+    for old, new in move_map.items():
+        if old.is_file():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old), str(new))
+
+    # Clean up empty dirs inside target, deepest first; then target itself.
+    for d in sorted(
+        (p for p in tgt_path.rglob("*") if p.is_dir()),
+        key=lambda p: len(p.parts),
+        reverse=True,
+    ):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+    try:
+        tgt_path.rmdir()
+    except OSError:
+        pass
+
+    return result
+
+
+def _step_headings_worker(path: Path, *, dry_run: bool) -> Result:
+    text = path.read_text(encoding="utf-8")
+    fm_block, body = _split_frontmatter(text)
+    new_body = _step_headings_text(body)
+    if new_body == body:
+        return "skip", path.name
+    if dry_run:
+        return "dry-run", path.name
+    path.write_text(fm_block + new_body, encoding="utf-8")
+    return "done", path.name
